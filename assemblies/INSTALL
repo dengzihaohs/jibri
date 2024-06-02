@@ -1,0 +1,181 @@
+#!/bin/bash
+
+ARCH=`arch`
+grnVersion=v1.0.0
+if [[ -f "build.sh" ]];
+then
+    . build.sh
+    grnVersion=$VERSION
+
+    # 清理配置，如果是OneStep的安装，跟随OneStep的检查逻辑
+    rm -rf /usr/local/docker-grn
+else
+    echo "loading docker images please wait for a while ..."
+    grnName=$(basename $(find -name "docker-grn-*" | head -1))
+    #grnVersion=${grnName:11:6}
+    grnVersion=$(echo $grnName | awk -F "-" '{print $NF}' | awk -F ".tar" '{print $1}' )
+    echo "grnName = $grnName"
+    docker load --input $grnName
+fi
+
+
+# 创建GRN安装数据的存储文件，用于下次快速安装
+GRN_INSTALL_PROFILE=/etc/grn_install_profile
+if [ ! -f "${GRN_INSTALL_PROFILE}" ];
+then
+    touch "$GRN_INSTALL_PROFILE"
+fi
+
+source /etc/profile
+source $GRN_INSTALL_PROFILE
+
+# 重复安装版本时候，使用之前设置过的参数
+function setEnv(){
+    key=$1
+    value=$2
+    # echo "Set grn ENV:  ${key}=${value}"
+    if [ -z "`grep ^"export ${key}" $GRN_INSTALL_PROFILE`" ]
+    then
+        echo  "export $key=$value" >> $GRN_INSTALL_PROFILE
+    else
+        if [[ $value =~ '@' ]];then
+            sed -i "s/^\export ${key}.*/\export $key=$value/" $GRN_INSTALL_PROFILE
+        else
+            sed -i "s@^\export ${key}.*@\export $key=$value@" $GRN_INSTALL_PROFILE
+        fi
+    fi
+}
+
+
+grn_tip="
+=====================================================================================================
+=====================================================================================================
+#
+# 欢迎使用grn一键安装服务！
+#
+=====================================================================================================
+=====================================================================================================
+"
+echo -e "${YELLOW}${grn_tip}${POS}${BLACK}"
+
+if [ $GMEET_ENV_DOMAIN_NAME ];
+then
+	read -e -p "请输入GMeet域名: " -i "${GMEET_ENV_DOMAIN_NAME}" GMEET_ENV_DOMAIN_NAME
+else
+	read -e -p "请输入GMeet域名: " -i "gmeet.tech" GMEET_ENV_DOMAIN_NAME
+fi
+
+if [ $GMEET_ENV_XMPP_HOST ];
+then
+	read -e -p "请输入GMeet XMPP服务地址: " -i "${GMEET_ENV_XMPP_HOST}" GMEET_ENV_XMPP_HOST
+else
+	read -e -p "请输入GMeet XMPP服务地址: " -i "${GMEET_ENV_XMPP_HOST}" GMEET_ENV_XMPP_HOST
+fi
+
+if [ $GMEET_ENV_XMPP_PORT ];
+then
+	read -e -p "请输入GMeet XMPP服务端口: " -i "${GMEET_ENV_XMPP_PORT}" GMEET_ENV_XMPP_PORT
+else
+	read -e -p "请输入GMeet XMPP服务端口: " -i "${GMEET_ENV_XMPP_PORT}" GMEET_ENV_XMPP_PORT
+fi
+
+if [ $GMEET_ENV_TCP_PORT ];
+then
+	read -e -p "请输入GMeet TCP端口(Nginx): " -i "${GMEET_ENV_TCP_PORT}" GMEET_ENV_TCP_PORT
+else
+	read -e -p "请输入GMeet TCP端口(Nginx): " -i "1443" GMEET_ENV_TCP_PORT
+fi
+
+if [ $GMEET_ENV_NUMAX_MINIO_URL ];
+then
+    read -e -p "请输入Minio服务ip端口：" -i "${GMEET_ENV_NUMAX_MINIO_URL}" GMEET_ENV_NUMAX_MINIO_URL
+else
+    read -e -p "请输入Minio服务ip端口：" -i "http://${GMEET_ENV_XMPP_HOST}:9000" GMEET_ENV_NUMAX_MINIO_URL
+fi
+
+
+
+valid_input=false
+
+while [ "$valid_input" == "false" ]; do
+    read -e -p "你想要启动几个容器: " -i 1 CONTAINER_NUM
+
+    # 使用正则表达式检查输入是否为数字，并且不为0
+    #if [[ $input =~ ^[1-9][0-9]*$ && $input <= 10 ]]; then
+    if [[ $CONTAINER_NUM =~ ^[1-9]$|^10$ ]]; then
+        valid_input=true
+    else
+        echo "输入不符合要求，请重新输入1-10的任意数字。"
+    fi
+done
+
+# 记住填过的配置
+setEnv GMEET_ENV_DOMAIN_NAME $GMEET_ENV_DOMAIN_NAME
+setEnv GMEET_ENV_XMPP_HOST $GMEET_ENV_XMPP_HOST
+setEnv GMEET_ENV_XMPP_PORT $GMEET_ENV_XMPP_PORT
+setEnv GMEET_ENV_TCP_PORT $GMEET_ENV_TCP_PORT
+setEnv GMEET_ENV_NUMAX_MINIO_URL $GMEET_ENV_NUMAX_MINIO_URL
+
+install_path=/usr/local/docker-grn
+mkdir -p  /var/numax/files/docker-gmeet/gmb/ 
+chmod -R a+rwX /var/numax/files/docker-gmeet/gmb/
+
+GMEET_ENV_DOMAIN_INNER_IP=""
+for real_ip in `ip address |grep 'inet ' | awk '{print $2}' |awk -F '/'  '{print $1}'`;
+do
+	if [[ $real_ip != "127.0"* && $real_ip != "172.17"* && $real_ip != "172.18"* && $real_ip != "" ]]
+	then
+		GMEET_ENV_DOMAIN_INNER_IP=${real_ip}
+		break
+	fi
+done
+
+CONTAINER_NAME=docker-grn
+for ((i=0;i<$CONTAINER_NUM;i++)); do
+  if [ $i -ne 0 ]; then
+        CONTAINER_NAME="docker-grn$i"
+  fi
+mkdir -p  /usr/local/$CONTAINER_NAME/conf /var/numax/logs/$CONTAINER_NAME
+
+docker run --name $CONTAINER_NAME -d \
+    --restart=unless-stopped \
+    -e CONTAINER_NAME=$CONTAINER_NAME \
+    -e INNER_IP=$GMEET_ENV_DOMAIN_INNER_IP \
+    -e JIBRI_RECORDER_PASSWORD=Nucleus! \
+    -e JIBRI_XMPP_PASSWORD=Nucleus! \
+    -e JIBRI_XMPP_USER=jibri \
+    -e JIBRI_BREWERY_MUC=Jibribrewery \
+    -e JIBRI_BREWERY_MUC_SIP=Jibrisipbrewery \
+    -e JIBRI_RECORDER_USER=recorder \
+    -e JIBRI_RECORDING_DIR=/config/recordings \
+    -e JIBRI_STRIP_DOMAIN_JID=conference \
+    -e JIBRI_LOGS_DIR=/config/logs \
+    -e XMPP_AUTH_DOMAIN=auth.${GMEET_ENV_DOMAIN_NAME} \
+    -e XMPP_DOMAIN=${GMEET_ENV_DOMAIN_NAME} \
+    -e XMPP_RECORDER_DOMAIN=recorder.${GMEET_ENV_DOMAIN_NAME} \
+    -e XMPP_SERVER=${GMEET_ENV_XMPP_HOST} \
+    -e JIBRI_XMPP_PORT=${GMEET_ENV_XMPP_PORT} \
+    -e XMPP_INTERNAL_MUC_DOMAIN=internal.auth.${GMEET_ENV_DOMAIN_NAME} \
+    -e JIBRI_FFMPEG_AUDIO_DEVICE=default \
+    -e JIBRI_FFMPEG_AUDIO_SOURCE=pulse \
+    -e XMPP_ENV_NAME=grnEnv \
+    -e DISPLAY=:0 \
+    -e JIBRI_FINALIZE_RECORDING_SCRIPT_PATH=/opt/jitsi/jibri/finalize_recording.sh \
+    -e GMEET_ENV_TCP_PORT=${GMEET_ENV_TCP_PORT} \
+    -e JIBRI_INSTANCE_ID="jibri-$(date +%N)" \
+    -e GMEET_ENV_NUMAX_MINIO_URL=${GMEET_ENV_NUMAX_MINIO_URL} \
+    --cap-add SYS_ADMIN \
+    --cap-add NET_BIND_SERVICE \
+    -v /usr/local/$CONTAINER_NAME/conf:/etc/jitsi/jibri \
+    -v /var/numax/files/docker-gmeet/gmb:/config/recordings \
+    -v /var/numax/logs/$CONTAINER_NAME:/config/logs \
+    -v /dev/shm:/dev/shm \
+    numax/docker-grn-$ARCH:$grnVersion
+done
+#    -p 333$i:333$i \
+#    -p 222$i:222$i \
+echo ''
+#docker-compose up -d
+docker ps
+
+echo "success run docker-grn"

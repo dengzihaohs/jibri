@@ -1,0 +1,21 @@
+#!/bin/bash
+
+# 获取所有容器ID以docker-grn开头的列表
+container_ids=$(docker ps -aq --filter "name=docker-grn*")
+
+# 循环遍历并停止这些容器
+for id in $container_ids; do
+    docker stop $id
+    docker rm $id
+done
+
+docker rm $(docker ps -a -q)
+
+docker rmi $(docker images -f "dangling=true" -q)
+
+rm docker-grn-*.tar
+rm docker-grn-*.zip
+rm debian-grn-*.tar
+rm .docker_temp*
+
+docker ps

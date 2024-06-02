@@ -1,0 +1,6 @@
+.idea/
+target/
+assemblies/build/
+*.iml
+.kotlintest
+debian/jibri
